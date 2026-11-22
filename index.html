@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Roblox Account Randomizer</title>
+  <style>
+    :root{font-family:Inter,system-ui,Arial,sans-serif;color:#edf2ff;background:#101522}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(140deg,#101522,#18243a);min-height:100vh}
+    .wrap{max-width:1050px;margin:auto;padding:28px 16px 60px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    h1{font-size:clamp(24px,4vw,34px);margin:0}.sub{color:#aab7d0;margin:8px 0 22px}
+    .badge{font-size:12px;color:#9ee6c0;border:1px solid #326c55;padding:6px 10px;border-radius:99px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+    .card{background:#1c2639;border:1px solid #34415a;border-radius:16px;padding:18px;box-shadow:0 12px 35px #0002}
+    h2{font-size:18px;margin:0 0 14px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    label{display:block;font-size:13px;color:#b9c6dc;margin:12px 0 6px}
+    input,select{width:100%;background:#111a2a;border:1px solid #42516c;color:#fff;padding:11px 12px;border-radius:9px;font:inherit}
+    button{border:0;border-radius:9px;padding:10px 13px;font:600 14px inherit;cursor:pointer;background:#5578f6;color:white}
+    button.secondary{background:#34445f}button.danger{background:#a83d52}button:disabled{opacity:.5;cursor:wait}
+    .row button{white-space:nowrap}.muted{color:#9eabc2;font-size:13px}.status{margin-top:12px;min-height:20px;color:#9ee6c0;font-size:13px}
+    .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.toolbar input{flex:1;min-width:180px}
+    .table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #34415a;font-size:14px}
+    th{color:#aab7d0;font-weight:600}td code{color:#d8e2ff;overflow-wrap:anywhere}.smallbtn{padding:7px 9px;font-size:12px;margin:2px}
+    .hidden{display:none!important}.lock{max-width:460px;margin:10vh auto}.note{font-size:12px;line-height:1.5;color:#9eabc2}
+    .count{color:#aab7d0;font-size:13px;margin-left:auto}
+    @media(max-width:600px){.wrap{padding:20px 12px}.card{padding:15px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h1>Roblox Account Randomizer</h1><span class="badge">Private · Encrypted database</span></div>
+  <p class="sub">Generate, simpan, dan kelola data akun dari PC maupun HP.</p>
+
+  <section id="lockView" class="card lock">
+    <h2>Buka database</h2>
+    <p class="muted">Masukkan master password untuk mengenkripsi atau membuka database. Password ini tidak dikirim ke GitHub.</p>
+    <label for="master">Master password</label>
+    <input id="master" type="password" autocomplete="current-password" placeholder="Minimal 12 karakter">
+    <div class="row" style="margin-top:12px"><button id="unlockBtn">Buka / Buat Database</button></div>
+    <p class="note">Akses aplikasi juga harus dibatasi melalui Cloudflare Access. Simpan master password dengan aman; jika hilang, isi database tidak dapat dipulihkan.</p>
+    <div id="lockStatus" class="status"></div>
+  </section>
+
+  <main id="appView" class="hidden">
+    <div class="grid">
+      <section class="card">
+        <h2>Generate akun</h2>
+        <label for="prefix">Awalan username</label><input id="prefix" value="Player" maxlength="12">
+        <label for="quantity">Jumlah akun</label>
+        <select id="quantity"><option>1</option><option>5</option><option selected>10</option><option>25</option><option>50</option><option>100</option><option>250</option><option>500</option></select>
+        <label for="passLength">Panjang password</label>
+        <select id="passLength"><option>12</option><option selected>16</option><option>20</option><option>24</option><option>32</option></select>
+        <div class="row" style="margin-top:16px"><button id="generateBtn">Generate & Simpan</button><button id="lockBtn" class="secondary">Kunci</button></div>
+        <div id="appStatus" class="status"></div>
+      </section>
+      <section class="card">
+        <h2>Backup & ekspor</h2>
+        <p class="muted">Ekspor file hanya berisi akun yang sedang tersimpan setelah didekripsi di browser.</p>
+        <div class="row"><button id="exportCsv">Export CSV</button><button id="exportTxt" class="secondary">Export TXT</button></div>
+        <p class="note" style="margin-top:16px">Data di GitHub disimpan sebagai ciphertext AES-GCM. Jangan masukkan password akun Roblox yang sudah dipakai di tempat lain.</p>
+        <div class="status" id="syncStatus">Database belum dimuat.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <div class="top"><h2>Database akun</h2><span id="count" class="count">0 akun</span></div>
+      <div class="toolbar"><input id="search" placeholder="Cari username..."><button id="refreshBtn" class="secondary">Refresh</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Username</th><th>Password</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody id="accountRows"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script>
+const API = "/api/database";
+const $ = id => document.getElementById(id);
+let accounts = [], cryptoKey = null, currentSalt = null, busy = false;
+
+function status(id, msg, error=false){ const el=$(id); el.textContent=msg; el.style.color=error?"#ff9eaa":"#9ee6c0"; }
+function b64(bytes){return btoa(String.fromCharCode(...new Uint8Array(bytes)));}
+function unb64(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0));}
+async function deriveKey(password,salt){
+  const material=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:310000,hash:"SHA-256"},material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function apiGet(){
+  const r=await fetch(API,{credentials:"include"});
+  if(!r.ok) throw new Error("Gagal membaca database ("+r.status+"). Periksa Worker dan Cloudflare Access.");
+  return r.json();
+}
+async function apiPut(payload){
+  const r=await fetch(API,{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  if(!r.ok) throw new Error("Gagal menyimpan ke GitHub ("+r.status+"): "+(await r.text()).slice(0,180));
+  return r.json();
+}
+async function unlock(){
+  if(busy)return; busy=true; $("unlockBtn").disabled=true;
+  try{
+    const password=$("master").value;
+    if(password.length<12) throw new Error("Gunakan master password minimal 12 karakter.");
+    const remote=await apiGet();
+    if(remote.exists){
+      const payload=remote.payload;
+      currentSalt=unb64(payload.salt);
+      cryptoKey=await deriveKey(password,currentSalt);
+      const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(payload.iv)},cryptoKey,unb64(payload.ciphertext));
+      accounts=JSON.parse(new TextDecoder().decode(plain));
+      if(!Array.isArray(accounts)) throw new Error("Format database tidak valid.");
+      status("syncStatus","Database berhasil dibuka dan dimuat.");
+    }else{
+      currentSalt=crypto.getRandomValues(new Uint8Array(16));
+      cryptoKey=await deriveKey(password,currentSalt); accounts=[];
+      await saveDatabase();
+      status("syncStatus","Database baru berhasil dibuat.");
+    }
+    $("lockView").classList.add("hidden"); $("appView").classList.remove("hidden");
+    $("master").value=""; render();
+  }catch(e){cryptoKey=null;status("lockStatus",e.message.includes("decrypt")?"Master password salah atau data terenkripsi rusak.":e.message,true);}
+  finally{busy=false;$("unlockBtn").disabled=false;}
+}
+async function saveDatabase(){
+  if(!cryptoKey) throw new Error("Database terkunci.");
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const plaintext=new TextEncoder().encode(JSON.stringify(accounts));
+  const ciphertext=await crypto.subtle.encrypt({name:"AES-GCM",iv},cryptoKey,plaintext);
+  await apiPut({payload:{version:1,algorithm:"AES-GCM",kdf:"PBKDF2-SHA256",iterations:310000,salt:b64(currentSalt),iv:b64(iv),ciphertext:b64(ciphertext)}});
+  status("syncStatus","Tersimpan ke GitHub · "+new Date().toLocaleTimeString());
+}
+function randInt(max){const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%(max);}
+function randomString(chars,len){let out="";for(let i=0;i<len;i++)out+=chars[randInt(chars.length)];return out;}
+function makeUsername(prefix){
+  prefix=(prefix||"Player").replace(/[^A-Za-z0-9_]/g,"").slice(0,12)||"Player";
+  for(let n=0;n<100;n++){
+    const candidate=(prefix+randomString("0123456789",Math.max(3,20-prefix.length))).slice(0,20);
+    if(candidate.length>=3 && !accounts.some(a=>a.username.toLowerCase()===candidate.toLowerCase())) return candidate;
+  }
+  return "User"+Date.now().toString().slice(-8)+randomString("0123456789",2);
+}
+function makePassword(len){
+  const chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*-_";
+  let p=randomString(chars,len);
+  // Ensure mixed character classes.
+  p=p.slice(0,-4)+"A"+"a"+"7"+randomString("!@#$%*-_",1);
+  return p;
+}
+async function generate(){
+  if(busy)return;busy=true;$("generateBtn").disabled=true;
+  try{
+    const n=Number($("quantity").value),len=Number($("passLength").value);
+    let added=0;
+    for(let i=0;i<n;i++){
+      const username=makeUsername($("prefix").value);
+      if(accounts.some(a=>a.username.toLowerCase()===username.toLowerCase()))continue;
+      accounts.unshift({id:crypto.randomUUID(),username,password:makePassword(len),createdAt:new Date().toISOString()});added++;
+    }
+    await saveDatabase();render();status("appStatus",added+" akun baru dibuat dan disimpan.");
+  }catch(e){status("appStatus",e.message,true);}
+  finally{busy=false;$("generateBtn").disabled=false;}
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function render(){
+  const q=$("search").value.toLowerCase();
+  const filtered=accounts.filter(a=>a.username.toLowerCase().includes(q));
+  $("count").textContent=accounts.length+" akun";
+  $("accountRows").innerHTML=filtered.map(a=>`<tr><td><code>${esc(a.username)}</code></td><td><code>${esc(a.password)}</code></td><td>${new Date(a.createdAt).toLocaleDateString()}</td><td><button class="smallbtn secondary" data-copy="${esc(a.username)}">Copy user</button><button class="smallbtn secondary" data-copy="${esc(a.password)}">Copy pass</button><button class="smallbtn danger" data-delete="${esc(a.id)}">Hapus</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">Belum ada akun.</td></tr>';
+}
+$("accountRows").addEventListener("click",async e=>{
+  const copy=e.target.dataset.copy,del=e.target.dataset.delete;
+  if(copy!==undefined){await navigator.clipboard.writeText(copy);status("appStatus","Berhasil disalin.");}
+  if(del){if(!confirm("Hapus akun ini dari database?"))return;accounts=accounts.filter(a=>a.id!==del);try{await saveDatabase();render();status("appStatus","Akun dihapus.");}catch(err){status("appStatus",err.message,true);}}
+});
+function download(name,content,type){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}
+$("exportCsv").onclick=()=>{const rows=[["username","password","createdAt"],...accounts.map(a=>[a.username,a.password,a.createdAt])];const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\r\n");download("roblox-accounts.csv",csv,"text/csv");};
+$("exportTxt").onclick=()=>download("roblox-accounts.txt",accounts.map(a=>a.username+" | "+a.password).join("\n"),"text/plain");
+$("unlockBtn").onclick=unlock;$("master").addEventListener("keydown",e=>{if(e.key==="Enter")unlock();});
+$("generateBtn").onclick=generate;$("search").oninput=render;
+$("refreshBtn").onclick=async()=>{try{const remote=await apiGet();if(!remote.exists){accounts=[];}else{const p=remote.payload;const key=await deriveKeyFromCurrent(p);const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(p.iv)},key,unb64(p.ciphertext));accounts=JSON.parse(new TextDecoder().decode(plain));}currentSalt=remote.exists?unb64(remote.payload.salt):currentSalt;render();status("syncStatus","Database disegarkan.");}catch(e){status("syncStatus",e.message,true);}};
+async function deriveKeyFromCurrent(p){
+  // Re-derive using the in-memory key's original passphrase is intentionally avoided.
+  // Refresh safely reloads the encrypted file only when it is unchanged; use Lock then Unlock for a full reload.
+  throw new Error("Untuk memuat ulang data terbaru, tekan Kunci lalu buka kembali database.");
+}
+$("lockBtn").onclick=()=>{cryptoKey=null;accounts=[];currentSalt=null;$("appView").classList.add("hidden");$("lockView").classList.remove("hidden");status("lockStatus","Database terkunci.");};
+</script>
+</body></html>
